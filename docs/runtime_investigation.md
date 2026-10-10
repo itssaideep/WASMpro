@@ -36,12 +36,12 @@ This investigation evaluates candidate WebAssembly (WASM) runtimes for resource-
 
 ---
 
-## 3. Why the ESP8266 Cannot Execute WebAssembly Runtimes
+## 3. Why the ESP8266 Cannot Execute Standard WebAssembly Runtimes
 
-The ESP8266 microcontroller presents three insurmountable physical and architectural barriers to hosting a WASM runtime:
+The ESP8266 microcontroller presents three insurmountable physical and architectural barriers to hosting standard WASM runtimes (Wasmtime, Wasmer, WAMR):
 
-### Barrier 1: WebAssembly Linear Memory Page Granularity vs. SRAM
-* In the WebAssembly specification (Wasm Core 1.0/2.0), **linear memory is allocated in discrete pages of 64 KiB (65,536 bytes)**.
+### Barrier 1: The "Memory Wall" (64 KiB Page Granularity vs. SRAM)
+* In the standard WebAssembly specification (Wasm Core 1.0/2.0), **linear memory is allocated in discrete pages of 64 KiB (65,536 bytes)**.
 * Even a minimal module declaring `(memory 1)` demands at least **64 KiB of contiguous RAM** for the module's linear memory instance alone.
 * The ESP8266 has **80 KB of total SRAM**, partitioned into:
   - Instruction RAM (IRAM): ~32 KB
@@ -55,7 +55,7 @@ The ESP8266 microcontroller presents three insurmountable physical and architect
 * The ESP8266 uses the **Cadence Tensilica Xtensa LX106** core (a 32-bit reduced RISC architecture).
 * It **lacks hardware floating-point support** (all IEEE 754 operations must be emulated in software via GCC libgcc routines).
 * It enforces a strict **Harvard architecture memory split**: code executing from Flash must be cached into IRAM in 32-bit aligned words. Unaligned accesses or writing to executable memory triggers immediate hardware fatal exceptions (`Fatal exception 0 / 9 / 28`).
-* While WAMR has experimental support for **ESP32** (which features a dual-core Xtensa LX6 with 520 KB SRAM and MMU), **no production WASM runtime supports Xtensa LX106**.
+* While WAMR has experimental support for **ESP32** (which features a dual-core Xtensa LX6 with 520 KB SRAM and MMU), **no production WASM runtime officially supports Xtensa LX106**.
 
 ### Barrier 3: Runtime Stack Overhead
 * WAMR's minimal classic interpreter requires an execution thread stack of at least **16 KB to 32 KB** to process the operand stack and opcode dispatch loops.
@@ -63,7 +63,25 @@ The ESP8266 microcontroller presents three insurmountable physical and architect
 
 ---
 
-## 4. Runtime Selection for the Experimental Suite
+## 4. Architectural Solutions for Sub-64KB Systems
+
+To address this "Memory Wall" in resource-constrained IoT devices, two distinct architectural paths exist:
+
+### Path A: Hardware Class Boundary Definition (Ericsson Industrial Finding)
+* For standard enterprise WASM runtimes (Wasmtime, Wasmer, standard WAMR) with full WASI POSIX capabilities, the **minimum viable hardware boundary is $\ge 256\text{ KB}$ SRAM** (e.g., ARM Cortex-M4/M33, nRF52840, STM32F4, or ESP32).
+* Hardware below this boundary ($\le 64\text{ KB}$ SRAM) cannot support standard WebAssembly memory models without breaking the 64 KiB page abstraction.
+
+### Path B: The Micro-Interpreter Strategy (`wasm3`)
+* **wasm3** is a specialized universal WebAssembly micro-interpreter written in C.
+* It bypasses the 64 KiB memory barrier through three techniques:
+  1. **Flash-Backed Bytecode Storage:** Instead of loading the `.wasm` binary into scarce RAM, the bytecode is embedded in the 4 MB Flash memory (ROM) as a `const uint8_t[]` array and decoded directly from Flash address space.
+  2. **Sub-Page Linear Memory:** `wasm3` allows modules with static memory requirements to execute within a small heap or stack buffer (~8 KB – 16 KB) rather than enforcing 64 KiB page allocations.
+  3. **M3 Intermediate Metacode:** It transforms WebAssembly bytecode on-the-fly into high-density direct-threaded metacode, significantly reducing operand stack overhead.
+* **Experimental Integration:** In this project, we implement and evaluate `wasm3` directly on the ESP8266 for Workload 1 to determine the exact execution overhead of interpreted WebAssembly on bare-metal Xtensa silicon.
+
+---
+
+## 5. Runtime Selection for the Experimental Suite
 
 Based on these verified findings:
 
@@ -82,7 +100,7 @@ Based on these verified findings:
 
 ---
 
-## 5. Methodological Validity & Confounding Variable Controls
+## 6. Methodological Validity & Confounding Variable Controls
 
 To adhere to the engineering standards of this project:
 * Measurements from the ESP8266 are **never directly plotted against host WASM measurements** as a 1:1 speed comparison, which would falsely conflate clock speed (80 MHz vs 3.5+ GHz) and ISA differences with runtime overhead.
