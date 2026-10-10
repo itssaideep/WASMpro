@@ -2,9 +2,7 @@
 
 ### Performance Benchmarking and Security Evaluation of WebAssembly in Resource-Constrained Embedded Systems
 
-> **Academic Context:** Master of Science in Computer Science Portfolio Project — Blekinge Institute of Technology (BTH), Sweden  
-> **Industrial Alignment:** Aligned with Ericsson Master's Thesis Opportunity (Req 792028, Linköping, Sweden)  
-> **Author:** Sai Deep  
+
 
 ---
 
