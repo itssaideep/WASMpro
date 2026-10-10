@@ -1,0 +1,7 @@
+# SecureWasm Edge — Python Dependencies
+# ======================================
+# Used by: experiment runner, data collection, analysis, visualization
+
+pandas>=2.0
+matplotlib>=3.7
+pyserial>=3.5

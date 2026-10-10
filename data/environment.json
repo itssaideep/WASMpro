@@ -1,0 +1,75 @@
+{
+  "project": "SecureWasm Edge",
+  "recorded_at": "2026-10-10T15:30:00+02:00",
+  "phase": "1 — Environment Validation",
+  "host": {
+    "os": "Windows 11 Home Insider Preview Single Language",
+    "architecture": "x86_64 (AMD64)",
+    "ram_mb": 32395,
+    "processor": "AMD64-based PC"
+  },
+  "embedded_target": {
+    "board": "NodeMCU v2 (ESP-12E)",
+    "mcu": "ESP8266 (Xtensa LX106)",
+    "cpu_freq_mhz": 80,
+    "sram_kb": 80,
+    "flash_mb": 4,
+    "framework": "Arduino",
+    "wasm_capable": false,
+    "wasm_incompatibility_reason": "Xtensa LX106 architecture not supported by any production WASM runtime. Only 80 KB SRAM available — far below minimum requirements of known runtimes (WAMR interpreter requires ~100 KB+, Wasmtime/Wasmer require x86_64/aarch64)."
+  },
+  "tools": {
+    "python": {
+      "version": "3.10.11",
+      "path": "C:\\Users\\Sai Deep\\AppData\\Local\\Programs\\Python\\Python310"
+    },
+    "pip": {
+      "version": "26.2.1"
+    },
+    "git": {
+      "version": "2.48.1.windows.1"
+    },
+    "platformio": {
+      "version": "6.1.18",
+      "notes": "Obsolete warning shown — previous was 6.2.0"
+    },
+    "gcc": {
+      "status": "not_installed",
+      "action_required": "Install MinGW-w64 or MSYS2 for native host benchmarks"
+    },
+    "clang": {
+      "status": "not_installed",
+      "action_required": "Install LLVM for wasm32-wasi compilation target"
+    },
+    "wasmtime": {
+      "status": "not_installed",
+      "action_required": "Install via winget or official installer"
+    },
+    "wasmer": {
+      "status": "not_installed",
+      "action_required": "Install via winget or official installer"
+    },
+    "wamr": {
+      "status": "not_investigated",
+      "action_required": "Investigate feasibility of building iwasm on Windows"
+    }
+  },
+  "python_packages": {
+    "pandas": "2.0.3",
+    "matplotlib": "3.7.2",
+    "pyserial": "3.5",
+    "numpy": "1.24.3"
+  },
+  "esp8266_build": {
+    "status": "success",
+    "firmware_bin_bytes": 273344,
+    "ram_used_bytes": 28244,
+    "ram_total_bytes": 81920,
+    "ram_usage_percent": 34.5,
+    "flash_used_bytes": 269187,
+    "flash_total_bytes": 1044464,
+    "flash_usage_percent": 25.8,
+    "build_time_seconds": 16.98,
+    "notes": "Phase 1 baseline firmware (blink + Serial info). WiFi library linked but disabled at runtime."
+  }
+}

@@ -1,0 +1,54 @@
+# ============================================
+# SecureWasm Edge — .gitignore
+# ============================================
+
+# ----- PlatformIO -----
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# ----- Build artifacts -----
+native/build/
+wasm/modules/
+*.o
+*.obj
+*.exe
+*.elf
+*.bin
+*.hex
+*.wasm
+*.wat
+
+# ----- Python -----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# ----- IDE / Editor -----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ----- OS -----
+*.log
+
+# ----- Data: keep raw data, ignore temp -----
+data/**/tmp/
+
+# ----- Credentials -----
+*.key
+*.pem
+*.env
