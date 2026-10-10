@@ -1,24 +1,16 @@
 /*
  * ============================================================
- * SecureWasm Edge — Complete ESP8266 Native Benchmark Suite
+ * SecureWasm Edge — ESP8266 Native & on-device wasm3 Benchmark Suite
  * ============================================================
- * Component B: 6 Deterministic C/C++ Workloads
+ * Executes:
+ *   1. All 6 Deterministic Native C Workloads (30 trials each)
+ *   2. On-Device wasm3 WebAssembly Execution for Workload 1 (30 trials)
  *
- * Workloads:
- *   1. integer     — LCG arithmetic & non-linear perturbation (10,000 iters)
- *   2. checksum    — IEEE 802.3 CRC32 over 256 bytes (100 iters)
- *   3. array       — Array permutation & bubble sort (100 iters)
- *   4. transform   — S-box substitution & rotation (1,000 iters)
- *   5. sensor      — Simulated sensor EMA filter & peak detector (10,000 iters)
- *   6. controlflow — State machine branching dispatch (10,000 iters)
- *
- * Measurement Protocol:
- *   - WiFi OFF to eliminate background radio interrupts
- *   - Timer overhead calibration using micros()
- *   - 1 unrecorded warm-up trial per workload
- *   - 30 recorded trials per workload (180 total runs)
- *   - Free heap before & after via ESP.getFreeHeap()
- *   - Strict checksum verification against expected values
+ * Provides:
+ *   - Direct on-device comparison between Native C and WASM Interpreter
+ *   - On-device initialization overhead measurement (wasm3 module parse & load)
+ *   - Heap tracking via ESP.getFreeHeap()
+ *   - Mathematical checksum verification (0x0F6B7313)
  *   - Structured CSV export over Serial (115200 baud)
  *
  * Target: NodeMCU v2 (ESP8266EX @ 80 MHz, Xtensa LX106)
@@ -28,6 +20,7 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include "workloads.h"
+#include "wasm3_workload.h"
 
 #define NUM_TRIALS 30
 
@@ -54,41 +47,31 @@ static const size_t NUM_WORKLOADS = sizeof(WORKLOADS) / sizeof(WORKLOADS[0]);
 void run_all_benchmarks() {
     Serial.println();
     Serial.println(F("=================================================="));
-    Serial.println(F("SecureWasm Edge — ESP8266 Native Benchmark Suite"));
-    Serial.println(F("Full 6-Workload Execution"));
+    Serial.println(F("SecureWasm Edge — ESP8266 Native & wasm3 Suite"));
     Serial.println(F("=================================================="));
 
     Serial.print(F("CONFIG:platform=esp8266,arch=xtensa-lx106,cpu_mhz="));
     Serial.print(ESP.getCpuFreqMHz());
     Serial.print(F(",sdk="));
     Serial.print(ESP.getSdkVersion());
-    Serial.print(F(",workloads="));
-    Serial.print(NUM_WORKLOADS);
-    Serial.print(F(",trials_per_workload="));
-    Serial.println(NUM_TRIALS);
-
-    /* Calibrate timer overhead */
-    unsigned long cal0 = micros();
-    unsigned long cal1 = micros();
-    unsigned long timer_overhead_us = (cal1 >= cal0) ? (cal1 - cal0) : 0;
-    Serial.print(F("CONFIG:timer_resolution_us=1,timer_overhead_us="));
-    Serial.println(timer_overhead_us);
+    Serial.print(F(",free_heap_boot="));
+    Serial.println(ESP.getFreeHeap());
 
     Serial.println(F("--- CSV DATA START ---"));
     Serial.println(F("record_type,experiment_id,workload,iterations,trial,duration_us,heap_before,heap_after,checksum,status"));
 
+    /* --------------------------------------------------------
+     * Part 1: Native C Workloads (6 workloads * 30 trials)
+     * -------------------------------------------------------- */
+    float native_integer_mean_us = 0.0f;
+
     for (size_t w = 0; w < NUM_WORKLOADS; ++w) {
         const WorkloadDef& def = WORKLOADS[w];
 
-        /* Warm-up run */
         yield();
-        uint32_t warmup_chk = def.fn(def.iters);
-        (void)warmup_chk;
+        def.fn(def.iters); /* Warmup */
 
         unsigned long total_us = 0;
-        unsigned long min_us = 0xFFFFFFFF;
-        unsigned long max_us = 0;
-        size_t pass_count = 0;
 
         for (uint32_t t = 0; t < NUM_TRIALS; ++t) {
             yield();
@@ -100,15 +83,9 @@ void run_all_benchmarks() {
             uint32_t h_after = ESP.getFreeHeap();
 
             unsigned long duration = (t_end >= t_start) ? (t_end - t_start) : (0xFFFFFFFF - t_start + t_end);
-
             bool pass = (chk == def.expected_checksum);
-            if (pass) pass_count++;
-
             total_us += duration;
-            if (duration < min_us) min_us = duration;
-            if (duration > max_us) max_us = duration;
 
-            /* CSV row */
             Serial.print(F("BENCHMARK,esp8266-native,"));
             Serial.print(def.name);
             Serial.print(F(","));
@@ -127,30 +104,73 @@ void run_all_benchmarks() {
             Serial.print(F(","));
             Serial.println(pass ? F("PASS") : F("FAIL"));
 
-            delay(5);
+            delay(2);
         }
 
-        /* Workload Summary */
-        float mean_us = (float)total_us / NUM_TRIALS;
-        Serial.print(F("WORKLOAD_SUMMARY,"));
-        Serial.print(def.name);
-        Serial.print(F(",trials="));
-        Serial.print(NUM_TRIALS);
-        Serial.print(F(",mean_us="));
-        Serial.print(mean_us, 2);
-        Serial.print(F(",min_us="));
-        Serial.print(min_us);
-        Serial.print(F(",max_us="));
-        Serial.print(max_us);
-        Serial.print(F(",passed="));
-        Serial.print(pass_count);
-        Serial.print(F("/"));
-        Serial.println(NUM_TRIALS);
+        if (w == 0) {
+            native_integer_mean_us = (float)total_us / NUM_TRIALS;
+        }
+    }
+
+    /* --------------------------------------------------------
+     * Part 2: On-Device wasm3 Micro-Interpreter Execution
+     * -------------------------------------------------------- */
+    Serial.println(F("STATUS: Executing on-device wasm3 WebAssembly interpreter..."));
+
+    unsigned long wasm3_total_exec_us = 0;
+    unsigned long wasm3_total_init_us = 0;
+    size_t wasm3_pass_count = 0;
+
+    for (uint32_t t = 0; t < NUM_TRIALS; ++t) {
+        yield();
+
+        Wasm3Result wr = run_wasm3_integer(WORKLOAD_INTEGER_ITERS);
+        bool pass = wr.success && (wr.checksum == EXPECTED_CHECKSUM_INTEGER);
+        if (pass) wasm3_pass_count++;
+
+        if (wr.error_msg != NULL && t == 0) {
+            Serial.print(F("DEBUG_WASM3_ERROR: "));
+            Serial.println(wr.error_msg);
+        }
+
+        wasm3_total_exec_us += wr.exec_duration_us;
+        wasm3_total_init_us += wr.init_duration_us;
+
+        Serial.print(F("BENCHMARK,esp8266-wasm3,integer,"));
+        Serial.print(WORKLOAD_INTEGER_ITERS);
+        Serial.print(F(","));
+        Serial.print(t + 1);
+        Serial.print(F(","));
+        Serial.print(wr.exec_duration_us);
+        Serial.print(F(","));
+        Serial.print(wr.heap_before);
+        Serial.print(F(","));
+        Serial.print(wr.heap_after);
+        Serial.print(F(",0x"));
+        if (wr.checksum < 0x10000000) Serial.print(F("0"));
+        Serial.print(wr.checksum, HEX);
+        Serial.print(F(","));
+        Serial.println(pass ? F("PASS") : F("FAIL"));
+
+        delay(5);
     }
 
     Serial.println(F("--- CSV DATA END ---"));
+
+    float wasm3_mean_exec_us = (float)wasm3_total_exec_us / NUM_TRIALS;
+    float wasm3_mean_init_us = (float)wasm3_total_init_us / NUM_TRIALS;
+    float overhead_ratio = (native_integer_mean_us > 0) ? (wasm3_mean_exec_us / native_integer_mean_us) : 0;
+
     Serial.println(F("=================================================="));
-    Serial.println(F("STATUS: ALL_WORKLOADS_COMPLETE"));
+    Serial.println(F("ON-DEVICE COMPARISON (ESP8266 NATIVE vs wasm3):"));
+    Serial.print(F("  Workload:               integer (10,000 iters)\n"));
+    Serial.print(F("  Native C Mean Latency:  ")); Serial.print(native_integer_mean_us, 2); Serial.println(F(" us"));
+    Serial.print(F("  wasm3 WASM Mean Exec:   ")); Serial.print(wasm3_mean_exec_us, 2); Serial.println(F(" us"));
+    Serial.print(F("  wasm3 Module Init Mean: ")); Serial.print(wasm3_mean_init_us, 2); Serial.println(F(" us"));
+    Serial.print(F("  wasm3 Overhead Ratio:   ")); Serial.print(overhead_ratio, 2); Serial.println(F("x"));
+    Serial.print(F("  wasm3 Checksum Checks:  ")); Serial.print(wasm3_pass_count); Serial.print(F("/")); Serial.println(NUM_TRIALS);
+    Serial.println(F("=================================================="));
+    Serial.println(F("STATUS: ALL_BENCHMARKS_COMPLETE"));
     Serial.println(F("=================================================="));
 }
 
@@ -158,18 +178,16 @@ void setup() {
     Serial.begin(115200);
     delay(500);
 
-    /* Turn off WiFi completely */
     WiFi.mode(WIFI_OFF);
     WiFi.forceSleepBegin();
     delay(20);
 
-    /* Turn on LED while running benchmarks */
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, LOW);
 
     run_all_benchmarks();
 
-    digitalWrite(LED_BUILTIN, HIGH); /* OFF when done */
+    digitalWrite(LED_BUILTIN, HIGH);
 }
 
 void loop() {
