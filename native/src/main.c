@@ -29,7 +29,11 @@
 
 #define NUM_TRIALS 30
 
-#ifndef OPT_LEVEL
+#if defined(OPT_O0)
+#define OPT_LEVEL "O0"
+#elif defined(OPT_O2)
+#define OPT_LEVEL "O2"
+#else
 #define OPT_LEVEL "O2"
 #endif
 
