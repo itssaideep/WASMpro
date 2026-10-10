@@ -27,11 +27,13 @@ def collect():
         return False
 
     print("Resetting ESP8266 to execute complete suite...")
-    s.dtr = False
-    s.rts = True
-    time.sleep(0.1)
-    s.rts = False
-    time.sleep(0.2)
+    s.setDTR(False)
+    s.setRTS(True)
+    s.setDTR(False)
+    time.sleep(0.15)
+    s.setRTS(False)
+    s.setDTR(False)
+    time.sleep(0.25)
 
     csv_lines = []
     collecting_csv = False
