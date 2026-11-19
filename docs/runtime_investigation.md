@@ -1,109 +1,116 @@
-# Component C: WebAssembly Runtime Feasibility & Compatibility Investigation
+# WebAssembly Runtime Feasibility & Architecture Investigation
 
-> **Project:** SecureWasm Edge  
-> **Context:** MSc Computer Science, BTH, Sweden · Ericsson Thesis Prep (Req 792028)  
+> **Project:** SecureWasm Edge — Performance Benchmarking and Security Evaluation of WebAssembly in Resource-Constrained Embedded Systems  
 > **Author:** Sai Deep  
-> **Date:** 2026-10-10  
 
 ---
 
 ## 1. Executive Summary
 
-This investigation evaluates candidate WebAssembly (WASM) runtimes for resource-constrained embedded systems and establishes the technical justification for our experimental architecture. We evaluate **Wasmtime**, **Wasmer**, and **WAMR (WebAssembly Micro Runtime)** against the physical constraints of our hardware: the **NodeMCU ESP8266 (Xtensa LX106, 80 KB SRAM, 4 MB Flash)** and our host development environment (**Windows 11 x86_64**).
+This investigation evaluates WebAssembly (Wasm) runtimes across two distinct operational environments:
+1. **Ultra-Constrained Embedded Silicon:** The **NodeMCU ESP8266EX** (Tensilica Xtensa LX106 @ 80 MHz, 80 KB SRAM, 4 MB Flash).
+2. **Cloud/Edge Host Execution:** **x86_64** (AMD Ryzen 7 @ 3.6 GHz, Windows 11).
 
-### Primary Finding & Hardware Incompatibility Proof
+### Core Architectural Finding
 
-> [!IMPORTANT]
-> **Definitive Conclusion on ESP8266 Compatibility:**  
-> The NodeMCU ESP8266 **cannot execute standard WebAssembly runtimes**. Executing WASM on this board is physically infeasible due to fundamental memory architecture and ISA limitations (detailed in Section 3). Consequently, in accordance with the project guidelines, the ESP8266 is utilized strictly for **native C/C++ embedded baseline benchmarking**, while controlled **native-versus-WASM comparisons** are conducted on the host platform.
+Standard desktop and server WebAssembly engines (**Wasmtime**, **Wasmer**) are physically incompatible with microcontrollers having $\le 64\text{ KB}$ SRAM due to:
+* The W3C specification requirement for 64 KiB linear memory pages.
+* The lack of virtual memory management units (MMU) for zero-cost guard pages.
+* Heavy runtime binary sizes (25 MB – 60 MB) and execution stack requirements ($>16\text{ KB}$).
+
+To overcome these constraints, the project implements a **two-tier architecture**:
+* On physical microcontrollers, we deploy **`wasm3`**, a universal micro-interpreter that executes bytecode directly from Flash ROM (`.rodata`) with **zero dynamic RAM overhead for bytecode storage** and sub-page memory boundaries.
+* On the host tier, we deploy **`Wasmtime`** (Cranelift JIT) with hardware guard page sandboxing, fuel metering, and **SDRaD in-process fault recovery**.
 
 ---
 
 ## 2. Comprehensive Runtime Evaluation Matrix
 
-| Criterion | Wasmtime (v49.0.2) | Wasmer (v7.5) | WAMR (v2.x) |
+| Criterion | Wasmtime (v49.0) | Wasmer (v7.5) | WAMR (v2.x) | wasm3 (v0.5.0) |
+|:---|:---|:---|:---|:---|
+| **Primary Maintainer** | Bytecode Alliance | Wasmer Inc. | Bytecode Alliance / Intel | Steven Massey / Community |
+| **Target Domains** | Server, Cloud, Edge, CLI | Universal, Cloud, Edge | Embedded, IoT, Edge | Ultra-Constrained MCUs, IoT |
+| **Supported Architectures** | x86_64, aarch64, riscv64 | x86_64, aarch64, riscv64 | x86, ARM, RISC-V, ESP32 | **ARM Cortex-M, ESP8266, ESP32, RISC-V, x86** |
+| **Execution Engines** | JIT (Cranelift) | JIT (Cranelift/Singlepass), Interp | Fast JIT, Classic Interp, AOT | **Direct-Threaded M3 Interpreter** |
+| **Binary Footprint** | ~25 MB – 45 MB | ~30 MB – 60 MB | 50 KB – 300 KB | **~64 KB Flash Footprint** |
+| **Minimum Usable RAM** | ~15 MB – 30 MB | ~20 MB – 40 MB | ~100 KB – 256 KB | **~10 KB – 20 KB SRAM** |
+| **Linear Memory Model**| 64 KiB Pages (MMU Guard) | 64 KiB Pages (MMU Guard) | 64 KiB Pages (Configurable Heap) | **Sub-Page (<64 KiB) & Stack-Only** |
+| **Flash Direct Execution**| No (Virtual RAM Mapped) | No (Virtual RAM Mapped) | Experimental | **Yes (`const uint8_t[]` in ROM)** |
+| **Status in Project** | **Adopted (Host JIT & SDRaD)** | **Evaluated** | **Investigated (Excluded: RAM)** | **Adopted (ESP8266 Live MCU Engine)** |
+
+---
+
+## 3. Microarchitectural & Memory Constraints on the ESP8266
+
+The ESP8266 microcontroller presents three fundamental hardware barriers to hosting standard Wasm engines:
+
+### 1. The "Memory Wall" (64 KiB Page Granularity vs. 43 KB Free Heap)
+* The official W3C WebAssembly core specification mandates that linear memory is addressed and allocated in discrete memory pages of exactly **64 KiB ($65,536$ bytes)** (`(memory 1)`).
+* The ESP8266EX has 80 KB total SRAM (partitioned into IRAM and DRAM). At runtime, the WiFi stack, NonOS SDK, and runtime heap leave **at most ~43 KB to ~51 KB of contiguous free DRAM**.
+* Standard runtimes attempt to allocate 64 KiB for the linear memory block on initialization, causing an immediate **Out-Of-Memory (OOM)** allocation crash.
+
+### 2. Architecture & ISA Limitations (Cadence Tensilica Xtensa LX106)
+* The Xtensa LX106 is a reduced 32-bit RISC core without hardware floating-point support. All IEEE 754 operations require software emulation via GCC `libgcc`, multiplying execution cycle counts.
+* Harvard architecture memory split: code executing from Flash must be 32-bit word aligned. Unaligned accesses or writing to executable regions triggers hardware exception traps.
+* No MMU: Standard runtimes achieve out-of-bounds protection by placing unmapped 4 GiB virtual address space guard pages around linear memory. Without an MMU, embedded execution requires explicit software bounds checking.
+
+### 3. Execution Stack Limitations
+* Standard interpreter loops in engines like WAMR require 16 KB – 32 KB execution thread stacks.
+* The ESP8266 execution stack is capped at 4 KB. Deep interpreter call stacks result in stack overflows and Watchdog Timer (`WDT`) resets.
+
+---
+
+## 4. Architectural Solutions for Sub-64KB Microcontrollers
+
+To overcome the memory barrier, SecureWasm Edge implements the **`wasm3` micro-interpreter architecture**:
+
+1. **Flash-Backed Direct Execution (`.rodata`):**
+   The compiled `.wasm` bytecode is embedded in the 4 MB Flash memory (ROM) as a `const uint8_t[]` array mapped at `0x40200000`. `wasm3` parses and executes the bytecode directly from Flash without copying it into RAM, consuming **$0\text{ Bytes}$ of heap memory for bytecode storage**.
+2. **Sub-Page Linear Memory & Register-Only Bytecode:**
+   Workload 1 was compiled into register-only bytecode (219 bytes, no memory section), requiring zero linear memory allocation. For memory-dependent workloads, `wasm3` allows allocating sub-page memory buffers (e.g., 2 KB to 8 KB) within the ESP8266 heap rather than enforcing the 64 KiB minimum.
+3. **M3 Direct-Threaded Metacode:**
+   `wasm3` transforms bytecode on-the-fly into direct-threaded M3 metacode, executing opcodes in-place within the ESP8266's 4 KB stack frame.
+
+---
+
+## 5. Host Runtime Architecture & Fault Recovery
+
+On host servers and edge gateways, **Wasmtime (v49.0)** provides high-throughput JIT execution using Cranelift. 
+
+To address the host boundary blind spot (where native crashes in host functions kill the runtime), SecureWasm Edge integrates **Secure Domain Rewind and Discard (SDRaD)**:
+* **Fault Interception:** Vector exception handlers catch hardware traps (`EXCEPTION_ACCESS_VIOLATION`, `SIGSEGV`).
+* **State Rollback:** Snapshot restoration via `setjmp`/`longjmp` safely returns control to the host caller.
+* **Domain Scrubbing:** Corrupted scratch memory is sanitized with `memset` in **$40\text{ ns}$**, preserving carrier-grade availability.
+
+---
+
+## 6. Experimental Benchmark Results
+
+### Microcontroller Execution (ESP8266 @ 80 MHz, $N = 30$ Trials)
+*Dataset: [`data/esp8266/esp8266_benchmarks_with_wasm3.csv`](../data/esp8266/esp8266_benchmarks_with_wasm3.csv)*
+
+| Metric | Native C Baseline | wasm3 Micro-Interpreter | Variance / Slowdown |
 |:---|:---|:---|:---|
-| **Primary Maintainer** | Bytecode Alliance | Wasmer Inc. | Bytecode Alliance / Intel |
-| **Target Domains** | Server, Cloud, Edge, CLI | Universal, Cloud, Edge | Embedded, IoT, Edge, Microcontrollers |
-| **Supported Architectures** | x86_64, aarch64, s390x, riscv64 | x86_64, aarch64, riscv64 | x86, x86_64, ARM, AArch64, MIPS, RISC-V, Xtensa (ESP32 only) |
-| **Execution Engines** | JIT (Cranelift) | JIT (Cranelift/Singlepass/LLVM), Interpreter | Classic Interpreter, Fast JIT, LLVM AOT |
-| **Runtime Binary Footprint** | ~25 MB – 45 MB | ~30 MB – 60 MB | **50 KB – 300 KB** (Interpreter) |
-| **Minimum Usable RAM** | ~15 MB – 30 MB | ~20 MB – 40 MB | **~100 KB – 256 KB** (Bare minimum) |
-| **WASI Support** | WASI Preview 1 & Preview 2 (Component Model) | WASI Preview 1 & 2 | WASI Preview 1 (subset tailored for embedded) |
-| **Sandboxing Capabilities** | Hardware guard pages, Memory bounds, Fuel metering, Epoch interruption | Memory bounds, Metering middleware, Sandbox limits | Linear memory bounds, Heap allocator sandbox, Execution limits |
-| **Target Build Requirements** | Rust toolchain, C compiler, 64-bit OS | Rust toolchain, C compiler, 64-bit OS | CMake, GCC/Clang cross-toolchain |
-| **Status in this Project** | **Adopted (Primary Host Runtime)** | **Evaluated** | **Investigated (Excluded due to target RAM limits)** |
+| **Execution Latency** | **$4,877.67\ \mu\text{s}$ ($\pm 0.48$)** | **$53,658.90\ \mu\text{s}$ ($\pm 0.99$)** | **$+1,000.1\%$ ($11.00\times$)** |
+| **RAM Footprint (Bytecode)**| Mapped in Flash | **$0\text{ Bytes}$ (Flash ROM)** | **Zero RAM Overhead** |
+| **Heap Memory Delta ($\Delta\text{Heap}$)**| $0\text{ Bytes}$ | **$0\text{ Bytes}$** | **Zero Memory Leaks** |
+| **32-Bit Golden Checksum** | `0x0F6B7313` | `0x0F6B7313` | **Bit-Perfect Determinism** |
 
----
+### Host Execution: Cranelift JIT vs. Native C (x86_64, $N = 30$ Trials)
+*Dataset: [`data/host/raw_benchmarks.csv`](../data/host/raw_benchmarks.csv)*
 
-## 3. Why the ESP8266 Cannot Execute Standard WebAssembly Runtimes
+| Metric | Native C (Clang -O2) | Wasmtime JIT (Cranelift) | Sandboxing Overhead |
+|:---|:---|:---|:---|
+| **Execution Latency** | **$60.4\ \mu\text{s}$ ($\pm 4.6$)** | **$69.5\ \mu\text{s}$ ($\pm 2.6$)** | **$+15.1\%$ ($1.15\times$)** |
+| **32-Bit Golden Checksum** | `0x0F6B7313` | `0x0F6B7313` | **Bit-Perfect Determinism** |
 
-The ESP8266 microcontroller presents three insurmountable physical and architectural barriers to hosting standard WASM runtimes (Wasmtime, Wasmer, WAMR):
+### Host Fault Recovery: SDRaD Prototype ($N = 60$ Trials)
+*Dataset: [`data/security/sdrad_recovery_benchmarks.csv`](../data/security/sdrad_recovery_benchmarks.csv)*
 
-### Barrier 1: The "Memory Wall" (64 KiB Page Granularity vs. SRAM)
-* In the standard WebAssembly specification (Wasm Core 1.0/2.0), **linear memory is allocated in discrete pages of 64 KiB (65,536 bytes)**.
-* Even a minimal module declaring `(memory 1)` demands at least **64 KiB of contiguous RAM** for the module's linear memory instance alone.
-* The ESP8266 has **80 KB of total SRAM**, partitioned into:
-  - Instruction RAM (IRAM): ~32 KB
-  - Data RAM (DRAM): ~48 KB
-* At boot, the NonOS SDK, WiFi stacks, and Arduino core consume approximately 28 KB of DRAM, leaving **at most ~51,544 bytes of free heap**.
-* **Mathematical Incompatibility:** 
-  $$\text{Available Free Heap } (51.5\text{ KB}) < \text{Single WASM Page } (64.0\text{ KB})$$
-  Allocating a single standard WebAssembly memory page causes immediate Out-Of-Memory (`OOM`) exhaustion before the runtime interpreter can even instantiate its internal execution stack.
-
-### Barrier 2: Architecture & ISA Limitations (Xtensa LX106)
-* The ESP8266 uses the **Cadence Tensilica Xtensa LX106** core (a 32-bit reduced RISC architecture).
-* It **lacks hardware floating-point support** (all IEEE 754 operations must be emulated in software via GCC libgcc routines).
-* It enforces a strict **Harvard architecture memory split**: code executing from Flash must be cached into IRAM in 32-bit aligned words. Unaligned accesses or writing to executable memory triggers immediate hardware fatal exceptions (`Fatal exception 0 / 9 / 28`).
-* While WAMR has experimental support for **ESP32** (which features a dual-core Xtensa LX6 with 520 KB SRAM and MMU), **no production WASM runtime officially supports Xtensa LX106**.
-
-### Barrier 3: Runtime Stack Overhead
-* WAMR's minimal classic interpreter requires an execution thread stack of at least **16 KB to 32 KB** to process the operand stack and opcode dispatch loops.
-* Arduino ESP8266 tasks are allocated a fixed **4 KB continuation stack**. Running any complex interpreter loop overflows this stack, resulting in silent memory corruption or watchdog timer (`WDT`) resets.
-
----
-
-## 4. Architectural Solutions for Sub-64KB Systems
-
-To address this "Memory Wall" in resource-constrained IoT devices, two distinct architectural paths exist:
-
-### Path A: Hardware Class Boundary Definition (Ericsson Industrial Finding)
-* For standard enterprise WASM runtimes (Wasmtime, Wasmer, standard WAMR) with full WASI POSIX capabilities, the **minimum viable hardware boundary is $\ge 256\text{ KB}$ SRAM** (e.g., ARM Cortex-M4/M33, nRF52840, STM32F4, or ESP32).
-* Hardware below this boundary ($\le 64\text{ KB}$ SRAM) cannot support standard WebAssembly memory models without breaking the 64 KiB page abstraction.
-
-### Path B: The Micro-Interpreter Strategy (`wasm3`)
-* **wasm3** is a specialized universal WebAssembly micro-interpreter written in C.
-* It bypasses the 64 KiB memory barrier through three techniques:
-  1. **Flash-Backed Bytecode Storage:** Instead of loading the `.wasm` binary into scarce RAM, the bytecode is embedded in the 4 MB Flash memory (ROM) as a `const uint8_t[]` array and decoded directly from Flash address space.
-  2. **Sub-Page Linear Memory:** `wasm3` allows modules with static memory requirements to execute within a small heap or stack buffer (~8 KB – 16 KB) rather than enforcing 64 KiB page allocations.
-  3. **M3 Intermediate Metacode:** It transforms WebAssembly bytecode on-the-fly into high-density direct-threaded metacode, significantly reducing operand stack overhead.
-* **Experimental Integration:** In this project, we implement and evaluate `wasm3` directly on the ESP8266 for Workload 1 to determine the exact execution overhead of interpreted WebAssembly on bare-metal Xtensa silicon.
-
----
-
-## 5. Runtime Selection for the Experimental Suite
-
-Based on these verified findings:
-
-1. **Embedded Native Baseline (ESP8266):**
-   - The ESP8266 executes small, deterministic C/C++ native workloads compiled directly to Xtensa machine code via `xtensa-lx106-elf-gcc`.
-   - It provides real-world microcontroller measurements: hardware timing (`micros()`), heap behavior (`ESP.getFreeHeap()`), and firmware size.
-   
-2. **WebAssembly Execution Platform (Host Windows x86_64):**
-   - Workloads are compiled to WebAssembly using **LLVM/Clang (`--target=wasm32`)**.
-   - **Wasmtime (v49.0.2)** is selected as the primary runtime because it implements:
-     - Robust JIT compilation via Cranelift
-     - Strict linear memory sandboxing with hardware guard pages
-     - Deterministic instruction metering (**Fuel**) for resource exhaustion experiments (Component E)
-     - High-precision host performance timers and process isolation
-   - **Wasmer** is analyzed for execution engine trade-offs (Singlepass vs Cranelift).
-
----
-
-## 6. Methodological Validity & Confounding Variable Controls
-
-To adhere to the engineering standards of this project:
-* Measurements from the ESP8266 are **never directly plotted against host WASM measurements** as a 1:1 speed comparison, which would falsely conflate clock speed (80 MHz vs 3.5+ GHz) and ISA differences with runtime overhead.
-* The native-versus-WASM execution overhead is evaluated **on the same host hardware** using identical source code, deterministic inputs, and matched optimization levels (`-O0` and `-O2`).
-* All comparative metrics strictly observe:
-  $$\text{WASM Overhead (\%)} = \left(\frac{T_{\text{WASM}} - T_{\text{Native}}}{T_{\text{Native}}}\right) \times 100$$
+| Metric | Measured Value | System Guarantee |
+|:---|:---|:---|
+| **Normal Host Service Overhead** | **$0.10\ \mu\text{s}$** | Negligible overhead during non-faulting execution |
+| **Fault Interception & Rollback Latency** | **$4.12\ \mu\text{s}$** | Microsecond recovery from native C crashes |
+| **Scratch Heap Discard Time** | **$0.04\ \mu\text{s}$ ($40\text{ ns}$)** | Sub-microsecond memory sanitization |
+| **Host Process Crash Rate** | **$0.0\%$ (Survives 100%)** | Zero process abort on host function crash |
+| **Multi-Tenant Availability** | **$100.0\%$** | Subsequent tenants execute cleanly post-crash |

@@ -1,4 +1,4 @@
-# Component F: SDRaD In-Process Fault Recovery Prototype
+# SDRaD In-Process Fault Recovery Prototype
 
 > **Project:** SecureWasm Edge — In-Process Isolation and Recovery for WebAssembly Runtimes  
 > **Inspired by:** Ericsson Research — *Secure Domain Rewind and Discard (SDRaD)* (DSN '23)  

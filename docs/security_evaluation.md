@@ -1,7 +1,7 @@
-# Component E: Security & Sandboxing Evaluation Report (RQ3)
+# Security & Sandboxing Evaluation Report
 
 > **Project:** SecureWasm Edge — Performance Benchmarking and Security Evaluation of WebAssembly in Resource-Constrained Embedded Systems  
-> **Research Question:** RQ3 (Security & Sandboxing): *How effectively does the WebAssembly sandbox trap out-of-bounds memory accesses, illegal pointer dereferences, and prevent unauthorized host resource exploitation without hardware MMU support?*  
+> **System Objective:** Validate WebAssembly sandbox containment against native C buffer overflows, pointer corruption, and control-flow hijacking without hardware MMU support.  
 > **Author:** Sai Deep  
 > **Dataset:** [`data/security/security_evaluation.csv`](../data/security/security_evaluation.csv) ($N=35$ Adversarial Vectors)  
 > **Visualization:** [`plots/security_evaluation.png`](../plots/security_evaluation.png)  
@@ -18,7 +18,7 @@ Across **35 adversarial test trials** spanning 6 fundamental attack classes, Web
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                               RQ3 ADVERSARIAL POSTURE OVERVIEW                                   │
+│                               ADVERSARIAL SECURITY POSTURE OVERVIEW                                   │
 ├──────────────────────────────────┬──────────────┬────────────────────────┬───────────────────────┤
 │ Threat Vector                    │ Native C     │ Wasmtime JIT (x86_64)  │ wasm3 (Micro-Interp)  │
 ├──────────────────────────────────┼──────────────┼────────────────────────┼───────────────────────┤
@@ -34,13 +34,13 @@ Across **35 adversarial test trials** spanning 6 fundamental attack classes, Web
 
 ---
 
-## 2. Experimental Methodology & Threat Model
+## 2. Threat Model & Attack Vectors
 
 ### Attack Vectors Tested
 
 ```mermaid
 flowchart TD
-    subgraph ATTACK_SURFACE["Adversarial Attack Vectors (RQ3)"]
+    subgraph ATTACK_SURFACE["Adversarial Attack Vectors"]
         V1["1. Spatial Memory Safety<br/>OOB Write (+0, +4, +1MB, 0xFFFFFFFC)"]
         V2["2. Memory Confidentiality<br/>OOB Read (Information Disclosure)"]
         V3["3. Control-Flow Integrity (CFI)<br/>Table OOB & Type Signature Mismatch"]
